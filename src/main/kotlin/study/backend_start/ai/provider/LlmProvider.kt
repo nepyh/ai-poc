@@ -35,6 +35,7 @@ fun getProvider(name: String, client: HttpClient): LlmProvider =
         "openrouter" -> OpenRouterProvider(client)
         "gemini" -> GeminiProvider(client)
         "claude" -> ClaudeProvider(client)
+        "deepseek" -> DeepSeekProvider(client)
         else -> throw IllegalArgumentException(
             "알 수 없는 provider: '$name'. 가능한 값: [openrouter, gemini, claude]"
         )
