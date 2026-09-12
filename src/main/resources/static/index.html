@@ -1,0 +1,726 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>루터 AI PoC</title>
+<style>
+  body { font-family: -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif; max-width: 960px; margin: 24px auto; padding: 0 16px; color: #1b1b1f; background: #fafafa; }
+  h1 { font-size: 22px; }
+  h2 { font-size: 17px; margin-top: 32px; border-bottom: 1px solid #ddd; padding-bottom: 6px; }
+  fieldset { border: 1px solid #ddd; border-radius: 8px; padding: 16px; background: #fff; }
+  legend { font-weight: 600; padding: 0 6px; }
+  label { display: block; margin: 10px 0 4px; font-size: 13px; color: #444; }
+  input[type=text], input[type=number], textarea, select { width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; }
+  textarea { resize: vertical; min-height: 44px; }
+  button { cursor: pointer; border: none; border-radius: 6px; padding: 8px 14px; font-size: 13px; background: #2a5bd7; color: #fff; margin-top: 8px; }
+  button.secondary { background: #eee; color: #222; }
+  button:disabled { opacity: .5; cursor: default; }
+  .day-card { border: 1px solid #ddd; border-radius: 8px; padding: 14px; margin: 10px 0; background: #fff; }
+  .day-card h3 { margin: 0 0 6px; font-size: 15px; }
+  .topics { color: #555; font-size: 13px; }
+  .task { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 4px 0; }
+  .task.done { text-decoration: line-through; color: #999; }
+  .quiz-q { border-top: 1px dashed #ddd; margin-top: 10px; padding-top: 10px; }
+  .quiz-choice { display: block; font-size: 13px; margin: 4px 0; }
+  .quiz-explain { font-size: 12px; margin-top: 4px; }
+  .quiz-explain.correct { color: #1a7f37; }
+  .quiz-explain.wrong { color: #c0392b; }
+  .grass-row { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 8px; }
+  .grass-cell { width: 22px; height: 22px; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 10px; color: #fff; }
+  .lvl-0 { background: #ebedf0; color: #999; }
+  .lvl-1 { background: #c6e6c1; }
+  .lvl-2 { background: #7bc96f; }
+  .lvl-3 { background: #3fa14a; }
+  .lvl-4 { background: #216e2f; }
+  .pill { display: inline-block; background: #f0f0f0; border-radius: 999px; padding: 2px 10px; font-size: 12px; margin-right: 6px; }
+  .msg { font-size: 13px; padding: 10px; border-radius: 6px; margin-top: 10px; }
+  .msg.error { background: #fdecea; color: #c0392b; }
+  .msg.info { background: #eaf1fd; color: #2a5bd7; }
+  .row { display: flex; gap: 10px; }
+  .row > div { flex: 1; }
+  .survey-q { margin-bottom: 14px; }
+  .survey-q > .survey-question { font-weight: 600; font-size: 13px; margin-bottom: 6px; display: block; }
+  .survey-option { display: block; font-size: 13px; font-weight: normal; color: #333; margin: 4px 0 4px 2px; cursor: pointer; }
+  .survey-option input { margin-right: 6px; }
+  #unavail-grid { user-select: none; touch-action: none; gap: 1px; }
+  .unavail-cell { background: #eef1f4; border-radius: 2px; cursor: pointer; height: 9px; }
+  .unavail-cell.selected { background: #e0574c; }
+  .unavail-hour-label { font-size: 9px; color: #888; text-align: right; padding-right: 4px; line-height: 9px; }
+  .unavail-day-label { font-size: 11px; text-align: center; font-weight: 600; padding-bottom: 3px; }
+</style>
+</head>
+<body>
+<h1>🌱 루터 AI PoC — 공부 계획 / 퀴즈 / 잔디</h1>
+<p style="color:#666;font-size:13px">Ktor + Koin 백엔드에 붙어 AI 계획 생성 → 퀴즈 → 설문 기반 재조정 → 잔디 계산 흐름을 확인하는 테스트 페이지입니다.</p>
+
+<fieldset>
+  <legend>-1. 실력 테스트 (선택 — 한 학년 아래 수준, 국어/영어/수학 통합 5문항)</legend>
+  <p style="color:#666;font-size:12px;margin:0 0 8px">지금 학년 진도를 나가기 전, 한 단계 아래 학년 핵심 개념이 탄탄한지 확인합니다. 결과(상/중/하)는 아래 두 계획 생성에 자동으로 반영됩니다.</p>
+  <div class="row">
+    <div>
+      <label>학년</label>
+      <select id="lt-grade">
+        <option value="1">중1</option>
+        <option value="2" selected>중2</option>
+        <option value="3">중3</option>
+      </select>
+    </div>
+  </div>
+  <button onclick="generateLevelTest()">실력 테스트 시작</button>
+  <span id="lt-loading" style="display:none;color:#666;font-size:13px"> 출제 중...</span>
+  <div id="lt-questions"></div>
+  <div id="lt-result"></div>
+</fieldset>
+
+<fieldset style="margin-top:16px">
+  <legend>0. 학습 스타일 설문 (선택 — 비워두면 표준값 사용, 두 계획 생성 방식 모두에 공통 반영)</legend>
+
+  <div class="survey-q">
+    <span class="survey-question">Q1. 한 번에 최대로 집중할 수 있는 시간은 어느 정도인가요?</span>
+    <label class="survey-option"><input type="radio" name="ss-focus" value="포모도로"> 짧고 굵게! (20~30분 공부 + 5분 휴식 / 포모도로 스타일)</label>
+    <label class="survey-option"><input type="radio" name="ss-focus" value="표준"> 표준적인 집중력 (45~50분 공부 + 10분 휴식)</label>
+    <label class="survey-option"><input type="radio" name="ss-focus" value="몰입형"> 몰입형 (90분 이상 쉬지 않고 진도 빼기)</label>
+  </div>
+
+  <div class="survey-q">
+    <span class="survey-question">Q2. 여러 과목을 공부할 때 선호하는 배분 방식은?</span>
+    <label class="survey-option"><input type="radio" name="ss-subjectdist" value="한과목집중"> 하루에 1 과목을 깊게 파기</label>
+    <label class="survey-option"><input type="radio" name="ss-subjectdist" value="두과목집중"> 하루에 2 과목을 깊게 파기</label>
+    <label class="survey-option"><input type="radio" name="ss-subjectdist" value="여러과목전환"> 하루에 3~4 과목을 조금씩 번갈아 가며 공부하기</label>
+  </div>
+
+  <div class="survey-q">
+    <span class="survey-question">Q3. AI가 계획을 짜줄 때 선호하는 '목표 타이트함'은?</span>
+    <label class="survey-option"><input type="radio" name="ss-intensity" value="스파르타"> 스파르타: 타이트하게 짜서 한계까지 쥐어짜기</label>
+    <label class="survey-option"><input type="radio" name="ss-intensity" value="밸런스"> 밸런스: 하루 할 수 있는 적정량만 딱 맞추기</label>
+    <label class="survey-option"><input type="radio" name="ss-intensity" value="여유"> 여유: 여유 시간을 충분히 두고 복습 위주로 짜기</label>
+  </div>
+
+  <div class="survey-q">
+    <span class="survey-question">Q4. 하루 공부 스케줄에서 가장 변수가 많은 시간대는?</span>
+    <label class="survey-option"><input type="radio" name="ss-volatile" value="방과후"> 방과 후 ~ 저녁 식사 전 (학원, 친구, 집 오자마자 쉬는 시간)</label>
+    <label class="survey-option"><input type="radio" name="ss-volatile" value="저녁이후"> 저녁 식사 후 ~ 밤 (스마트폰, 딴짓, 집중력 저하)</label>
+    <label class="survey-option"><input type="radio" name="ss-volatile" value="주말"> 주말 전체 (수면 패턴 불규칙, 야외 활동 등)</label>
+  </div>
+
+  <div class="survey-q">
+    <span class="survey-question">Q5. 시험 바로 전날(D-1)에는 주로 어떻게 공부하나요?</span>
+    <label class="survey-option"><input type="radio" name="ss-daybefore" value="가볍게훑기"> 새로운 문제를 풀기보다 전체 내용을 가볍게 훑어본다.</label>
+    <label class="survey-option"><input type="radio" name="ss-daybefore" value="오답집중"> 그동안 틀렸던 오답과 핵심 요약집만 집중 공격한다.</label>
+    <label class="survey-option"><input type="radio" name="ss-daybefore" value="진도끝까지"> 시간이 부족해 밤을 새워서라도 진도를 끝까지 뺀다.</label>
+  </div>
+
+  <div class="survey-q">
+    <span class="survey-question">Q6. 본인이 생각하기에 '스스로에 대한 공부량 예상'은 얼마나 정확한가요?</span>
+    <label class="survey-option"><input type="radio" name="ss-selfest" value="의욕과다형"> 의욕 과다형: "할 수 있다!"고 생각했지만 매번 의욕이 앞서 다 못 끝낸다.</label>
+    <label class="survey-option"><input type="radio" name="ss-selfest" value="정확예측형"> 정확 예측형: 내가 하루에 할 수 있는 양을 거의 정확히 안다.</label>
+    <label class="survey-option"><input type="radio" name="ss-selfest" value="과소평가형"> 과소 평가형: 생각보다 일찍 끝나서 남는 시간이 생기는 편이다.</label>
+  </div>
+
+  <div class="survey-q">
+    <span class="survey-question">Q7. 목표 점수 미달 시, 주된 원인은 어디에 있다고 생각하나요?</span>
+    <label class="survey-option"><input type="radio" name="ss-scoregap" value="시간부족형"> 공부 절대량이 부족해서 (시간 투자 부족)</label>
+    <label class="survey-option"><input type="radio" name="ss-scoregap" value="방법문제형"> 공부 방법이 잘못되어서 (개념 미숙, 문제 적응력 부족)</label>
+    <label class="survey-option"><input type="radio" name="ss-scoregap" value="실수컨디션형"> 시험 당일 실수나 컨디션 난조 때문에</label>
+  </div>
+</fieldset>
+
+<fieldset style="margin-top:16px">
+  <legend>0-B. 공부 불가능 시간 (요일별, 드래그로 선택 — 두 계획 생성 방식 모두에 공통 반영)</legend>
+  <p style="color:#666;font-size:12px;margin:0 0 8px">빨간 칸을 클릭하거나 드래그해서 학교/학원/수면 등 공부할 수 없는 시간을 요일별로 선택하세요(30분 단위). 기본값은 매일 수면 시간(00:00~06:30, 23:00~24:00) + 평일 학교 시간(08:30~16:30)입니다.</p>
+  <button type="button" class="secondary" onclick="resetUnavailDefault()">기본값으로 초기화</button>
+  <button type="button" class="secondary" onclick="clearUnavailAll()">모두 지우기</button>
+  <div id="unavail-grid" style="margin-top:10px;overflow-x:auto"></div>
+</fieldset>
+
+<fieldset style="margin-top:16px">
+  <legend>1. 시험범위 문서 업로드 → AI 계획 생성</legend>
+  <p style="color:#666;font-size:12px;margin:0 0 10px">PDF / HWP / HWPX / DOCX 파일을 올리면 AI가 범위를 읽어서 계획을 짭니다. 과목명은 비워두면 AI가 문서에서 추론합니다.</p>
+  <label>파일 (pdf, docx, hwp, hwpx)</label>
+  <input type="file" id="doc-file" accept=".pdf,.docx,.hwp,.hwpx">
+  <div class="row">
+    <div>
+      <label>과목 (선택, 비우면 AI가 추론)</label>
+      <input type="text" id="doc-subject" placeholder="예: 수학">
+    </div>
+    <div>
+      <label>학년</label>
+      <select id="doc-grade">
+        <option value="1">중1</option>
+        <option value="2" selected>중2</option>
+        <option value="3">중3</option>
+      </select>
+    </div>
+    <div>
+      <label>남은 기간(일) (시작일/시험일 입력 시 무시됨, 최대 31)</label>
+      <input type="number" id="doc-days" value="30" min="1" max="31">
+    </div>
+    <div>
+      <label>목표 점수 (선택)</label>
+      <input type="number" id="doc-score">
+    </div>
+  </div>
+  <div class="row">
+    <div>
+      <label>시작일 (선택)</label>
+      <input type="date" id="doc-start-date">
+    </div>
+    <div>
+      <label>시험일 (선택)</label>
+      <input type="date" id="doc-exam-date">
+    </div>
+  </div>
+  <label><input type="checkbox" id="doc-cram" style="width:auto;display:inline-block;vertical-align:middle"> 벼락치기 모드</label>
+  <button onclick="generatePlanFromDocument()">문서로 계획 생성</button>
+  <span id="doc-loading" style="display:none;color:#666;font-size:13px"> 문서 분석 및 생성 중...</span>
+</fieldset>
+
+<div id="messages"></div>
+
+<div id="board-view"></div>
+
+<script>
+const state = { board: null, quizByDay: {}, levelTestId: null, levelTier: null };
+
+function el(html) {
+  const t = document.createElement('template');
+  t.innerHTML = html.trim();
+  return t.content.firstChild;
+}
+
+function showMessage(text, type) {
+  const box = document.getElementById('messages');
+  box.innerHTML = '';
+  box.appendChild(el(`<div class="msg ${type}">${text}</div>`));
+}
+
+async function api(path, options) {
+  const res = await fetch('/api' + path, Object.assign({
+    headers: { 'Content-Type': 'application/json' }
+  }, options));
+  const body = await res.json().catch(() => null);
+  if (!res.ok) {
+    const errMsg = body ? `[${body.code}] ${body.message}` : `HTTP ${res.status}`;
+    throw new Error(errMsg);
+  }
+  return body;
+}
+
+// ---- 실력 테스트 (한 학년 아래 수준, 국어/영어/수학 통합) ----
+async function generateLevelTest() {
+  const grade = parseInt(document.getElementById('lt-grade').value, 10);
+  document.getElementById('lt-result').innerHTML = '';
+  document.getElementById('lt-loading').style.display = 'inline';
+  try {
+    const test = await api('/study-plan/level-test/generate', { method: 'POST', body: JSON.stringify({ grade }) });
+    state.levelTestId = test.testId;
+    renderLevelTestQuestions(test);
+  } catch (e) {
+    showMessage('실력 테스트 생성 실패: ' + e.message, 'error');
+  } finally {
+    document.getElementById('lt-loading').style.display = 'none';
+  }
+}
+
+function renderLevelTestQuestions(test) {
+  const box = document.getElementById('lt-questions');
+  box.innerHTML = '';
+  box.appendChild(el(`<p style="font-size:12px;color:#666;margin:8px 0">기준 학년: ${test.referenceGradeLabel}</p>`));
+  test.questions.forEach((q, qi) => {
+    const choicesHtml = q.choices.map((c, ci) => `
+      <label class="quiz-choice">
+        <input type="radio" name="lt-q-${q.id}" value="${ci}"> ${c}
+      </label>
+    `).join('');
+    box.appendChild(el(`
+      <div class="quiz-q" data-question-id="${q.id}">
+        <div><b>Q${qi + 1}. [${q.subject}]</b> ${q.questionText}</div>
+        ${choicesHtml}
+      </div>
+    `));
+  });
+  box.appendChild(el(`<button onclick="submitLevelTest()">실력 테스트 제출</button>`));
+}
+
+async function submitLevelTest() {
+  const box = document.getElementById('lt-questions');
+  const answers = Array.from(box.querySelectorAll('.quiz-q')).map(qEl => {
+    const questionId = parseInt(qEl.dataset.questionId, 10);
+    const checked = qEl.querySelector('input[type=radio]:checked');
+    return { questionId, selectedIndex: checked ? parseInt(checked.value, 10) : -1 };
+  });
+
+  try {
+    const result = await api(`/study-plan/level-test/${state.levelTestId}/submit`, {
+      method: 'POST', body: JSON.stringify({ answers })
+    });
+    state.levelTier = result.tier;
+    document.getElementById('lt-result').innerHTML =
+      `<div class="msg info">📊 결과: ${result.correctCount} / ${result.totalCount} 정답 · 등급: <b>${result.tier}</b> — 계획 생성 시 자동 반영됩니다.</div>`;
+  } catch (e) {
+    showMessage('실력 테스트 제출 실패: ' + e.message, 'error');
+  }
+}
+
+// ---- 요일별 공부 불가능 시간 그리드 (30분 단위, 드래그로 선택) ----
+const UNAVAIL_DAY_LABELS = ['월', '화', '수', '목', '금', '토', '일'];
+const UNAVAIL_SLOTS_PER_DAY = 48;
+const unavailSelected = new Set(); // "dayIndex-slotIndex", dayIndex 0=월 ... 6=일
+let unavailPaintMode = null;
+
+function slotToTime(slot) {
+  const totalMin = slot * 30;
+  return `${String(Math.floor(totalMin / 60)).padStart(2, '0')}:${String(totalMin % 60).padStart(2, '0')}`;
+}
+
+function defaultUnavailSelection() {
+  unavailSelected.clear();
+  for (let day = 0; day < 7; day++) { // 매일 수면 시간
+    for (let slot = 0; slot <= 12; slot++) unavailSelected.add(`${day}-${slot}`); // 00:00~06:30
+    for (let slot = 46; slot <= 47; slot++) unavailSelected.add(`${day}-${slot}`); // 23:00~24:00
+  }
+  for (let day = 0; day < 5; day++) { // 월~금 학교
+    for (let slot = 17; slot <= 32; slot++) unavailSelected.add(`${day}-${slot}`); // 08:30~16:30
+  }
+}
+
+function resetUnavailDefault() {
+  defaultUnavailSelection();
+  renderUnavailGrid();
+}
+
+function clearUnavailAll() {
+  unavailSelected.clear();
+  renderUnavailGrid();
+}
+
+function renderUnavailGrid() {
+  const grid = document.getElementById('unavail-grid');
+  grid.innerHTML = '';
+  grid.style.display = 'grid';
+  grid.style.gridTemplateColumns = '38px repeat(7, minmax(28px, 1fr))';
+  grid.style.gridAutoRows = '9px';
+  grid.style.minWidth = '320px';
+
+  grid.appendChild(el('<div></div>'));
+  UNAVAIL_DAY_LABELS.forEach(label => grid.appendChild(el(`<div class="unavail-day-label">${label}</div>`)));
+
+  for (let slot = 0; slot < UNAVAIL_SLOTS_PER_DAY; slot++) {
+    const isHourStart = slot % 2 === 0;
+    grid.appendChild(el(
+      isHourStart
+        ? `<div class="unavail-hour-label">${slotToTime(slot)}</div>`
+        : '<div></div>'
+    ));
+    for (let day = 0; day < 7; day++) {
+      const key = `${day}-${slot}`;
+      const cell = el(`<div class="unavail-cell" data-key="${key}"></div>`);
+      if (unavailSelected.has(key)) cell.classList.add('selected');
+      grid.appendChild(cell);
+    }
+  }
+}
+
+function paintUnavailCell(cell) {
+  if (!cell) return;
+  const key = cell.dataset.key;
+  if (unavailPaintMode) {
+    unavailSelected.add(key);
+    cell.classList.add('selected');
+  } else {
+    unavailSelected.delete(key);
+    cell.classList.remove('selected');
+  }
+}
+
+function setupUnavailDrag() {
+  const grid = document.getElementById('unavail-grid');
+  grid.addEventListener('pointerdown', e => {
+    const cell = e.target.closest('.unavail-cell');
+    if (!cell) return;
+    e.preventDefault();
+    unavailPaintMode = !unavailSelected.has(cell.dataset.key);
+    paintUnavailCell(cell);
+    grid.setPointerCapture(e.pointerId);
+  });
+  grid.addEventListener('pointermove', e => {
+    if (unavailPaintMode === null) return;
+    const target = document.elementFromPoint(e.clientX, e.clientY);
+    const cell = target && target.closest && target.closest('.unavail-cell');
+    if (cell) paintUnavailCell(cell);
+  });
+  grid.addEventListener('pointerup', () => { unavailPaintMode = null; });
+  grid.addEventListener('pointercancel', () => { unavailPaintMode = null; });
+}
+
+function compressToRanges(slotIndices) {
+  const sorted = [...slotIndices].sort((a, b) => a - b);
+  const ranges = [];
+  let runStart = null;
+  let prev = null;
+  for (const idx of sorted) {
+    if (runStart === null) {
+      runStart = idx;
+    } else if (idx !== prev + 1) {
+      ranges.push([runStart, prev]);
+      runStart = idx;
+    }
+    prev = idx;
+  }
+  if (runStart !== null) ranges.push([runStart, prev]);
+  return ranges.map(([start, end]) => ({ start: slotToTime(start), end: slotToTime(end + 1) }));
+}
+
+function collectUnavailableSlots() {
+  const byDay = Array.from({ length: 7 }, () => []);
+  unavailSelected.forEach(key => {
+    const [day, slot] = key.split('-').map(Number);
+    byDay[day].push(slot);
+  });
+  const result = [];
+  byDay.forEach((slots, day) => {
+    compressToRanges(slots).forEach(range => result.push({ dayOfWeek: day + 1, start: range.start, end: range.end }));
+  });
+  return result;
+}
+
+defaultUnavailSelection();
+renderUnavailGrid();
+setupUnavailDrag();
+
+function collectStudyStyle() {
+  function val(name) {
+    const checked = document.querySelector(`input[name="${name}"]:checked`);
+    return checked ? checked.value : null;
+  }
+  const style = {
+    focusSessionStyle: val('ss-focus'),
+    subjectDistribution: val('ss-subjectdist'),
+    planIntensity: val('ss-intensity'),
+    volatileTimeSlot: val('ss-volatile'),
+    dayBeforeExamStyle: val('ss-daybefore'),
+    selfEstimationAccuracy: val('ss-selfest'),
+    scoreGapCause: val('ss-scoregap')
+  };
+  return Object.values(style).some(v => v !== null) ? style : null;
+}
+
+async function generatePlanFromDocument() {
+  const fileInput = document.getElementById('doc-file');
+  const file = fileInput.files[0];
+  if (!file) {
+    showMessage('파일을 먼저 선택해주세요.', 'error');
+    return;
+  }
+
+  const subject = document.getElementById('doc-subject').value.trim();
+  const grade = document.getElementById('doc-grade').value;
+  const daysRemaining = document.getElementById('doc-days').value;
+  const targetScore = document.getElementById('doc-score').value.trim();
+  const isCramMode = document.getElementById('doc-cram').checked;
+  const startDate = document.getElementById('doc-start-date').value;
+  const examDate = document.getElementById('doc-exam-date').value;
+
+  const formData = new FormData();
+  formData.append('file', file);
+  if (subject) formData.append('subject', subject);
+  formData.append('grade', grade);
+  formData.append('daysRemaining', daysRemaining);
+  if (targetScore) formData.append('targetScore', targetScore);
+  formData.append('isCramMode', String(isCramMode));
+  if (startDate) formData.append('startDate', startDate);
+  if (examDate) formData.append('examDate', examDate);
+  formData.append('unavailableSlots', JSON.stringify(collectUnavailableSlots()));
+  if (state.levelTier) formData.append('levelTier', state.levelTier);
+  const studyStyle = collectStudyStyle();
+  if (studyStyle) {
+    Object.entries(studyStyle).forEach(([key, value]) => { if (value) formData.append(key, value); });
+  }
+
+  document.getElementById('doc-loading').style.display = 'inline';
+  try {
+    const res = await fetch('/api/study-plan/generate-from-document', { method: 'POST', body: formData });
+    const body = await res.json().catch(() => null);
+    if (!res.ok) {
+      const errMsg = body ? `[${body.code}] ${body.message}` : `HTTP ${res.status}`;
+      throw new Error(errMsg);
+    }
+    state.board = body;
+    state.quizByDay = {};
+    showMessage('문서 기반 계획이 생성되었습니다. (board id: ' + body.id + ')', 'info');
+    renderBoard();
+  } catch (e) {
+    showMessage('문서 기반 계획 생성 실패: ' + e.message, 'error');
+  } finally {
+    document.getElementById('doc-loading').style.display = 'none';
+  }
+}
+
+function renderBoard() {
+  const view = document.getElementById('board-view');
+  view.innerHTML = '';
+  if (!state.board) return;
+
+  const b = state.board;
+  view.appendChild(el(`
+    <h2>2. 중${b.grade} · ${b.subject} 계획 (총 ${b.dailyPlans.length}일${b.isCramMode ? ' · 벼락치기 모드' : ''})</h2>
+  `));
+
+  view.appendChild(el(`<div style="font-size:12px;color:#666;margin-bottom:4px">📅 시작일: ${b.startDate}${b.examDate ? ' · 시험일: ' + b.examDate : ''}${b.levelTier ? ' · 실력 등급: ' + b.levelTier : ''}</div>`));
+  if (b.sourceFileName) {
+    view.appendChild(el(`<div style="font-size:12px;color:#666;margin-bottom:4px">📄 업로드한 문서: ${b.sourceFileName}</div>`));
+  }
+  if (b.extractedScope && b.extractedScope.length) {
+    const scopeHtml = b.extractedScope.map(s => `<span class="pill">${s}</span>`).join('');
+    view.appendChild(el(`<div style="margin-bottom:8px">AI가 인식한 범위: ${scopeHtml}</div>`));
+  }
+
+  if (b.tips && b.tips.length) {
+    const tipsHtml = b.tips.map(t => `<span class="pill">💡 ${t}</span>`).join('');
+    view.appendChild(el(`<div>${tipsHtml}</div>`));
+  }
+
+  b.dailyPlans.forEach(day => renderDayCard(view, day));
+
+  view.appendChild(el(`<h2>3. 잔디</h2>`));
+  const grassRow = el(`<div class="grass-row" id="grass-row"></div>`);
+  view.appendChild(grassRow);
+  loadGrass();
+
+  view.appendChild(el(`<h2>4. AI 챗봇 (갑자기 생긴 일정 반영)</h2>`));
+  const dayOptionsHtml = b.dailyPlans.map(d => `<option value="${d.day}">Day ${d.day} (${d.date})</option>`).join('');
+  view.appendChild(el(`
+    <div class="day-card">
+      <p style="color:#666;font-size:12px;margin:0 0 8px">예: "오늘 할머니짐 옮기느라 5시~10시엔 공부 못해요"처럼 말하면, 그 날짜 계획을 챗봇이 바로 조정합니다.</p>
+      <label>대상 Day</label>
+      <select id="chat-day">${dayOptionsHtml}</select>
+      <div class="chat-log" id="chat-log" style="max-height:220px;overflow-y:auto;margin:10px 0;border:1px solid #eee;border-radius:6px;padding:8px"></div>
+      <div class="row">
+        <div><input type="text" id="chat-input" placeholder="챗봇에게 말해보세요"></div>
+      </div>
+      <button onclick="sendChatMessage()">전송</button>
+    </div>
+  `));
+  loadChatHistory();
+}
+
+// ---- AI 챗봇 (보드별 대화, 메시지마다 대상 Day를 지정해 그 날짜 계획을 조정) ----
+function renderChatLog(turns) {
+  const box = document.getElementById('chat-log');
+  if (!box) return;
+  box.innerHTML = '';
+  turns.forEach(t => {
+    const who = t.role === 'user' ? '🙋 나' : '🤖 챗봇';
+    box.appendChild(el(`<div style="font-size:13px;margin:6px 0"><b>${who}</b> ${t.content}</div>`));
+  });
+  box.scrollTop = box.scrollHeight;
+}
+
+async function loadChatHistory() {
+  if (!state.board) return;
+  try {
+    const history = await api(`/chat/${state.board.id}/history`, { method: 'GET' });
+    renderChatLog(history);
+  } catch (e) {
+    // 대화 이력이 아직 없을 수 있음 — 조용히 무시
+  }
+}
+
+async function sendChatMessage() {
+  if (!state.board) return;
+  const day = parseInt(document.getElementById('chat-day').value, 10);
+  const input = document.getElementById('chat-input');
+  const message = input.value.trim();
+  if (!message) return;
+  input.value = '';
+
+  try {
+    const result = await api(`/chat/${state.board.id}/daily/${day}/message`, {
+      method: 'POST', body: JSON.stringify({ message })
+    });
+    await loadChatHistory();
+
+    if (result.planChanged && result.updatedDailyPlan) {
+      const dayObj = state.board.dailyPlans.find(d => d.day === day);
+      Object.assign(dayObj, result.updatedDailyPlan);
+      const card = document.getElementById(`day-card-${day}`);
+      if (card) {
+        const topicEls = card.querySelectorAll('.topics');
+        topicEls[0].textContent = '주제: ' + dayObj.topics.join(', ');
+        topicEls[1].textContent = `목표: ${dayObj.goal} · 예상 ${dayObj.estimatedMinutes}분`;
+      }
+      renderTasks(dayObj);
+      showMessage('챗봇이 계획을 조정했습니다.', 'info');
+    }
+  } catch (e) {
+    showMessage('챗봇 응답 실패: ' + e.message, 'error');
+  }
+}
+
+function renderDayCard(view, day) {
+  const card = el(`
+    <div class="day-card" id="day-card-${day.day}">
+      <h3>Day ${day.day} (${day.dateOffset}, ${day.date})</h3>
+      <div class="topics">주제: ${day.topics.join(', ')}</div>
+      <div class="topics">목표: ${day.goal} · 예상 ${day.estimatedMinutes}분</div>
+      <div class="tasks" id="tasks-${day.day}"></div>
+      <button class="secondary" onclick="generateQuiz(${day.day})">퀴즈 생성</button>
+      <div id="quiz-${day.day}"></div>
+      <div id="feedback-${day.day}"></div>
+    </div>
+  `);
+  view.appendChild(card);
+  renderTasks(day);
+}
+
+function renderTasks(day) {
+  const box = document.getElementById(`tasks-${day.day}`);
+  box.innerHTML = '';
+  day.tasks.forEach(task => {
+    const row = el(`
+      <div class="task ${task.isCompleted ? 'done' : ''}">
+        <input type="checkbox" ${task.isCompleted ? 'checked' : ''} onchange="toggleTask(${day.day}, ${task.id}, this.checked)">
+        <span><b>${task.startTime}~${task.endTime}</b> ${task.taskName} (${task.estimatedMinutes}분)</span>
+      </div>
+    `);
+    box.appendChild(row);
+  });
+}
+
+async function toggleTask(day, taskId, checked) {
+  try {
+    const updated = await api(`/study-plan/${state.board.id}/daily/${day}/tasks/${taskId}/complete`, {
+      method: 'POST', body: JSON.stringify({ isCompleted: checked })
+    });
+    const dayObj = state.board.dailyPlans.find(d => d.day === day);
+    Object.assign(dayObj, updated);
+    renderTasks(dayObj);
+    loadGrass();
+  } catch (e) {
+    showMessage('할 일 상태 변경 실패: ' + e.message, 'error');
+  }
+}
+
+async function generateQuiz(day) {
+  try {
+    const quiz = await api(`/study-plan/${state.board.id}/daily/${day}/quiz/generate`, { method: 'POST' });
+    state.quizByDay[day] = quiz;
+    renderQuiz(day);
+  } catch (e) {
+    showMessage('퀴즈 생성 실패: ' + e.message, 'error');
+  }
+}
+
+function renderQuiz(day) {
+  const box = document.getElementById(`quiz-${day}`);
+  const quiz = state.quizByDay[day];
+  box.innerHTML = '';
+  quiz.questions.forEach((q, qi) => {
+    const choicesHtml = q.choices.map((c, ci) => `
+      <label class="quiz-choice">
+        <input type="radio" name="q-${day}-${q.id}" value="${ci}"> ${c}
+      </label>
+    `).join('');
+    box.appendChild(el(`
+      <div class="quiz-q" data-question-id="${q.id}">
+        <div><b>Q${qi + 1}.</b> ${q.questionText}</div>
+        ${choicesHtml}
+        <div class="quiz-explain" id="explain-${q.id}"></div>
+      </div>
+    `));
+  });
+  box.appendChild(el(`<button onclick="submitQuiz(${day})">퀴즈 제출</button>`));
+}
+
+async function submitQuiz(day) {
+  const box = document.getElementById(`quiz-${day}`);
+  const answers = Array.from(box.querySelectorAll('.quiz-q')).map(qEl => {
+    const questionId = parseInt(qEl.dataset.questionId, 10);
+    const checked = qEl.querySelector('input[type=radio]:checked');
+    return { questionId, selectedIndex: checked ? parseInt(checked.value, 10) : -1 };
+  });
+
+  try {
+    const result = await api(`/study-plan/${state.board.id}/daily/${day}/quiz/submit`, {
+      method: 'POST', body: JSON.stringify({ answers })
+    });
+    result.results.forEach(r => {
+      const target = document.getElementById(`explain-${r.questionId}`);
+      target.className = 'quiz-explain ' + (r.isCorrect ? 'correct' : 'wrong');
+      target.textContent = (r.isCorrect ? '✅ 정답' : `❌ 오답 (정답: ${r.correctIndex + 1}번)`) + ' · ' + r.explanation;
+    });
+    showMessage(`퀴즈 결과: ${result.correctCount} / ${result.totalCount} 정답`, 'info');
+    renderFeedbackForm(day);
+  } catch (e) {
+    showMessage('퀴즈 제출 실패: ' + e.message, 'error');
+  }
+}
+
+function renderFeedbackForm(day) {
+  const box = document.getElementById(`feedback-${day}`);
+  box.innerHTML = '';
+  box.appendChild(el(`
+    <div class="quiz-q">
+      <div><b>오늘 학습 설문</b></div>
+      <label>체감 난이도</label>
+      <select id="fb-diff-${day}">
+        <option value="쉬움">쉬움</option>
+        <option value="적당" selected>적당</option>
+        <option value="어려움">어려움</option>
+      </select>
+      <label>실제 소요 시간(분)</label>
+      <input type="number" id="fb-time-${day}" value="90">
+      <label>집중도 (1~5)</label>
+      <input type="number" id="fb-focus-${day}" value="3" min="1" max="5">
+      <button onclick="submitFeedback(${day})">설문 제출 → 계획 재조정</button>
+      <div id="coaching-${day}"></div>
+    </div>
+  `));
+}
+
+async function submitFeedback(day) {
+  const difficulty = document.getElementById(`fb-diff-${day}`).value;
+  const timeSpentMinutes = parseInt(document.getElementById(`fb-time-${day}`).value, 10);
+  const focusLevel = parseInt(document.getElementById(`fb-focus-${day}`).value, 10);
+
+  try {
+    const result = await api(`/study-plan/${state.board.id}/daily/${day}/feedback`, {
+      method: 'POST', body: JSON.stringify({ difficulty, timeSpentMinutes, focusLevel })
+    });
+    document.getElementById(`coaching-${day}`).innerHTML =
+      `<div class="msg info">🧭 ${result.coachingMessage}</div>`;
+
+    result.updatedDailyPlans.forEach(updated => {
+      const dayObj = state.board.dailyPlans.find(d => d.day === updated.day);
+      Object.assign(dayObj, updated);
+      const card = document.getElementById(`day-card-${updated.day}`);
+      card.querySelector('.topics').textContent = '주제: ' + updated.topics.join(', ');
+      renderTasks(updated);
+    });
+    loadGrass();
+  } catch (e) {
+    showMessage('설문 제출 실패: ' + e.message, 'error');
+  }
+}
+
+async function loadGrass() {
+  if (!state.board) return;
+  try {
+    const grass = await api(`/study-plan/${state.board.id}/grass`, { method: 'GET' });
+    const row = document.getElementById('grass-row');
+    if (!row) return;
+    row.innerHTML = '';
+    grass.entries.forEach(entry => {
+      row.appendChild(el(`
+        <div class="grass-cell lvl-${entry.colorLevel}" title="${entry.dateOffset} · ${Math.round(entry.completionRate * 100)}%">
+          ${entry.day}
+        </div>
+      `));
+    });
+  } catch (e) {
+    // 잔디 조회 실패는 조용히 무시 (아직 보드가 없을 수 있음)
+  }
+}
+</script>
+</body>
+</html>
